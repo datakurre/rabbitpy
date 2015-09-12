@@ -111,6 +111,19 @@ class Queue(base.AMQPClass):
         """
         return self.consume()
 
+    async def __aiter__(self):
+        await self._consume(no_ack=False, prefetch=None, priority=None)
+        return self
+
+    async def __anext__(self):
+        if self.consuming:
+            message = self.channel._consume_message()
+            if message:
+                return message
+            else:
+                if self.consuming:
+                    self.stop_consuming()
+                raise StopAsyncIteration
 
     def __len__(self):
         """Return the pending number of messages in the queue by doing a
@@ -152,7 +165,7 @@ class Queue(base.AMQPClass):
         # Set the value
         super(Queue, self).__setattr__(name, value)
 
-    def bind(self, source, routing_key=None, arguments=None):
+    async def bind(self, source, routing_key=None, arguments=None):
         """Bind the queue to the specified exchange or routing key.
 
         :type source: str or :py:class:`rabbitpy.exchange.Exchange` exchange
@@ -168,7 +181,7 @@ class Queue(base.AMQPClass):
                                          exchange=source,
                                          routing_key=routing_key or '',
                                          arguments=arguments)
-        response = self._rpc(frame)
+        response = await self._rpc(frame)
         return isinstance(response, specification.Queue.BindOk)
 
     def consume(self, no_ack=False, prefetch=None, priority=None):
@@ -245,7 +258,7 @@ class Queue(base.AMQPClass):
         """
         raise DeprecationWarning()
 
-    def declare(self, passive=False):
+    async def declare(self, passive=False):
         """Declare the queue on the RabbitMQ channel passed into the
         constructor, returning the current message count for the queue and
         its consumer count as a tuple.
@@ -256,7 +269,7 @@ class Queue(base.AMQPClass):
         :rtype: tuple(int, int)
 
         """
-        response = self._rpc(self._declare(passive))
+        response = await self._rpc(self._declare(passive))
         if not self.name:
             self.name = response.queue
         return response.message_count, response.consumer_count
@@ -310,7 +323,7 @@ class Queue(base.AMQPClass):
         """Purge the queue of all of its messages."""
         self._rpc(specification.Queue.Purge())
 
-    def stop_consuming(self):
+    async def stop_consuming(self):
         """Stop consuming messages. This is usually invoked if you want to
         cancel your consumer from outside the context manager or generator.
 
@@ -322,7 +335,7 @@ class Queue(base.AMQPClass):
             return
         if not self.consuming:
             raise exceptions.NotConsumingError()
-        self.channel._cancel_consumer(self)
+        await self.channel._cancel_consumer(self)
         self.consuming = False
 
     def unbind(self, source, routing_key=None):
@@ -340,7 +353,7 @@ class Queue(base.AMQPClass):
         self._rpc(specification.Queue.Unbind(queue=self.name, exchange=source,
                                              routing_key=routing_key))
 
-    def _consume(self, no_ack=False, prefetch=None, priority=None):
+    async def _consume(self, no_ack=False, prefetch=None, priority=None):
         """Return a :py:class:_Consumer instance as a contextmanager, properly
         shutting down the consumer when the generator is exited.
 
@@ -352,7 +365,7 @@ class Queue(base.AMQPClass):
         """
         if prefetch:
             self.channel.prefetch_count(prefetch, False)
-        self.channel._consume(self, no_ack, priority)
+        await self.channel._consume(self, no_ack, priority)
         self.consuming = True
 
     def _declare(self, passive=False):

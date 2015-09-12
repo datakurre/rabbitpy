@@ -177,7 +177,7 @@ class AMQPChannel(StatefulObject):
     def __int__(self):
         return self._channel_id
 
-    def close(self):
+    async def close(self):
         if self.closed:
             if self._is_debugging:
                 LOGGER.debug('AMQPChannel %i close invoked and already closed',
@@ -196,12 +196,12 @@ class AMQPChannel(StatefulObject):
         if self._is_debugging:
             LOGGER.debug('Channel %i Waiting for a valid response for %s',
                          self._channel_id, frame_value.name)
-        self.rpc(frame_value)
+        await self.rpc(frame_value)
         self._set_state(self.CLOSED)
         if self._is_debugging:
             LOGGER.debug('Channel #%i closed', self._channel_id)
 
-    def rpc(self, frame_value):
+    async def rpc(self, frame_value):
         """Send a RPC command to the remote server. This should not be directly
         invoked.
 
@@ -215,17 +215,17 @@ class AMQPChannel(StatefulObject):
             LOGGER.debug('Sending %r', frame_value.name)
         self.write_frame(frame_value)
         if frame_value.synchronous:
-            return self._wait_on_frame(frame_value.valid_responses)
+            return await self._wait_on_frame(frame_value.valid_responses)
 
-    def wait_for_confirmation(self):
+    async def wait_for_confirmation(self):
         """Used by the Message.publish method when publisher confirmations are
         enabled.
 
         :rtype: pamqp.frame.Frame
 
         """
-        return self._wait_on_frame([specification.Basic.Ack,
-                                    specification.Basic.Nack])
+        return await self._wait_on_frame([specification.Basic.Ack,
+                                          specification.Basic.Nack])
 
     def write_frame(self, frame):
         """Put the frame in the write queue for the IOWriter object to write to
@@ -312,7 +312,7 @@ class AMQPChannel(StatefulObject):
         self._set_state(self.CLOSED)
         LOGGER.debug('Channel #%i closed', self._channel_id)
 
-    def _interrupt_wait_on_frame(self, callback, *args):
+    async def _interrupt_wait_on_frame(self, callback, *args):
         """Invoke to interrupt the current self._wait_on_frame blocking loop
         in order to allow for a flow such as waiting on a full message while
         consuming. Will wait until the ``_wait_on_frame_interrupt`` is cleared
@@ -322,7 +322,7 @@ class AMQPChannel(StatefulObject):
         if not self._waiting:
             if self._is_debugging:
                 LOGGER.debug('No need to interrupt wait')
-            return callback(*args)
+            return await callback(*args)
         LOGGER.debug('Interrupting the wait on frame')
         self._interrupt['callback'] = callback
         self._interrupt['args'] = args
@@ -370,7 +370,7 @@ class AMQPChannel(StatefulObject):
             self._read_queue.task_done()
         else:
             try:
-                value = self._read_queue.get(True, .1)
+                value = self._read_queue.get(False)
                 self._read_queue.task_done()
             except queue.Empty:
                 value = None
@@ -413,7 +413,7 @@ class AMQPChannel(StatefulObject):
             return frame_value.name == frame_type.name
         return False
 
-    def _wait_on_frame(self, frame_type=None):
+    async def _wait_on_frame(self, frame_type=None):
         """Read from the queue, blocking until a result is returned. An
         individual frame type or a list of frame types can be passed in to wait
         for specific frame types. If there is no match on the frame retrieved
@@ -431,6 +431,7 @@ class AMQPChannel(StatefulObject):
             LOGGER.debug('Waiting on %r frame(s)', frame_type)
         start_state = self.state
         self._waiting = True
+        timeout = 0.0001
         while not self.closed and start_state == self.state:
             value = self._read_from_queue()
             if value is not None:
@@ -451,6 +452,10 @@ class AMQPChannel(StatefulObject):
                 if self._is_debugging:
                     LOGGER.debug('Exiting wait due to interrupt')
                 break
+
+            import asyncio
+            await asyncio.sleep(timeout)
+            timeout = min(timeout * 2, 0.1)
 
         self._waiting = False
 

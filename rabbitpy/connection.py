@@ -112,7 +112,8 @@ class Connection(base.StatefulObject):
         self._write_queue = queue.Queue()
 
         # Lock used when managing the channel stack
-        self._channel_lock = threading.Lock()
+        import asyncio
+        self._channel_lock = asyncio.Lock()
 
         # Attributes for core object threads
         self._channel0 = None
@@ -162,7 +163,7 @@ class Connection(base.StatefulObject):
         """
         return self._events.is_set(events.CONNECTION_BLOCKED)
 
-    def channel(self, blocking_read=False):
+    async def channel(self, blocking_read=False):
         """Create a new channel
 
         If blocking_read is True, the cross-thread Queue.get use will use
@@ -176,7 +177,7 @@ class Connection(base.StatefulObject):
         :raises: rabbitpy.exceptions.RemoteClosedChannelException
 
         """
-        with self._channel_lock:
+        async with self._channel_lock:
             channel_id = self._get_next_channel_id()
             channel_frames = queue.Queue()
             self._channels[channel_id] = \
@@ -190,7 +191,7 @@ class Connection(base.StatefulObject):
                                 self._io.write_trigger,
                                 blocking_read)
             self._add_channel_to_io(self._channels[channel_id], channel_frames)
-            self._channels[channel_id].open()
+            await self._channels[channel_id].open()
             return self._channels[channel_id]
 
     def close(self):
